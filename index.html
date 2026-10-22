@@ -15,9 +15,70 @@ function render(){nav.innerHTML=tabs.map(([id,name])=>'<button class="'+(id===ta
 if(tab==='today')app.innerHTML='<div class="card"><h2>Доброе утро</h2><div class="count">04:40</div><p class="muted">Каждый день. 10 километров. После прогулки — море.</p></div><div class="card"><h3>Сегодня на ТРОПЕ</h3><p>Не скорость определяет путь, а решение идти.</p></div><div class="card notice"><h3>Тестовая версия</h3><p class="muted">Это открытая демонстрация без входа и общей базы. Не вводите настоящие имена, даты рождения или медицинские сведения.</p></div>';
 if(tab==='cold')app.innerHTML='<div class="card"><h2>Закаливание</h2><p class="muted">Личный дневник на этом устройстве</p><input id="temp" placeholder="Температура воды, °C" inputmode="decimal"><textarea id="feel" placeholder="Как себя чувствую (без личных данных)"></textarea><button id="add">Сохранить запись</button></div><div class="card"><h3>История</h3>'+items('cold',['temp','feel'])+'</div>';
 if(tab==='run')app.innerHTML='<div class="card"><h2>Бег</h2><input id="distance" placeholder="Дистанция, км" inputmode="decimal"><input id="time" placeholder="Время или результат"><button id="add">Добавить тренировку</button></div><div class="card"><h3>Мои записи</h3>'+items('run',['distance','time'])+'</div>';
-if(tab==='media')app.innerHTML='<div class="card"><h2>Фото и видео</h2><p class="muted">Загрузка файлов появится после подключения защищённого хранилища. Сейчас можно создать демонстрационную заявку.</p><input id="caption" placeholder="Название публикации"><select id="type" style="padding:10px;background:#081e33;color:white;border-radius:9px"><option>Фото</option><option>Видео</option></select> <button id="add">Отправить на модерацию</button></div><div class="card"><h3>Одобренные записи</h3>'+items('media',['type','caption'])+'</div>';
+if(tab==='media')app.innerHTML='<div class="card"><h2>Фото и видео</h2><div style="padding:16px 0;text-align:center"><button onclick="openCircle()" style="border-radius:100px;background:#307bd0;padding:16px 20px">◉ Записать кружочек</button><p class="muted">До 60 секунд · предпросмотр только на этом устройстве</p></div><p class="muted">Загрузка файлов появится после подключения защищённого хранилища. Сейчас можно создать демонстрационную заявку.</p><input id="caption" placeholder="Название публикации"><select id="type" style="padding:10px;background:#081e33;color:white;border-radius:9px"><option>Фото</option><option>Видео</option></select> <button id="add">Отправить на модерацию</button></div><div class="card"><h3>Одобренные записи</h3>'+items('media',['type','caption'])+'</div>';
 if(tab==='people')app.innerHTML='<div class="card"><h2>Люди ТРОПЫ</h2><p class="muted">В реальном приложении участники появятся только после приглашения и согласия. Сейчас здесь нет настоящих профилей.</p></div>';
 if(tab==='admin')app.innerHTML='<div class="card"><h2>Панель ведущего</h2><p class="muted">Демонстрация модерации. Это НЕ защищённая административная панель.</p><h3>Ожидают решения: '+data.pending.length+'</h3>'+data.pending.map((x,i)=>'<div class="item">'+esc(x.type)+' · '+esc(x.caption)+' <button data-ok="'+i+'">Одобрить</button> <button class="secondary" data-no="'+i+'">Отклонить</button></div>').join('')+'</div>';
 const addBtn=document.getElementById('add');if(addBtn)addBtn.onclick=()=>{if(tab==='cold')add('cold',{temp:'temp',feel:'feel'});if(tab==='run')add('run',{distance:'distance',time:'time'});if(tab==='media')add('pending',{caption:'caption',type:'type'})};
 app.querySelectorAll('[data-ok]').forEach(b=>b.onclick=()=>{data.media.unshift(data.pending.splice(Number(b.dataset.ok),1)[0]);save()});app.querySelectorAll('[data-no]').forEach(b=>b.onclick=()=>{data.pending.splice(Number(b.dataset.no),1);save()})}render();
+</script><style>
+#circleOverlay{position:fixed;inset:0;background:#06111ff5;z-index:999;display:none;overflow:auto;padding:20px;text-align:center}
+#circleOverlay.show{display:block}
+#circleOverlay video{width:min(76vw,330px);height:min(76vw,330px);border-radius:50%;object-fit:cover;background:#152c45;border:4px solid #3689df;display:block;margin:24px auto}
+#circleOverlay .controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+#circleOverlay button{min-width:100px}
+#circleOverlay .time{font-size:23px;font-variant-numeric:tabular-nums;color:#d8e9ff}
+</style>
+<div id="circleOverlay" role="dialog" aria-modal="true" aria-label="Запись видеокружочка">
+<button style="float:right;background:#1c3b59" onclick="closeCircle()">Закрыть ×</button>
+<h2 style="margin-top:55px">Видеокружочек</h2>
+<p class="muted">Тестовая запись · видео не загружается на сервер</p>
+<video id="circleVideo" playsinline muted autoplay></video>
+<div class="time" id="circleTimer">00:00 / 01:00</div>
+<p id="circleStatus" class="muted">Разреши доступ к камере и микрофону</p>
+<div class="controls">
+<button id="circleStart" onclick="startCircle()" disabled>● Запись</button>
+<button id="circleStop" onclick="stopCircle()" disabled>■ Стоп</button>
+<button id="circleFlip" onclick="flipCircle()">↻ Камера</button>
+<button id="circleDownload" onclick="downloadCircle()" style="display:none">Сохранить видео</button>
+</div>
+</div>
+<script>
+let circleStream=null,circleRecorder=null,circleParts=[],circleUrl=null,circleFacing='user',circleTick=null,circleStarted=0,circleMime='';
+const cv=document.getElementById('circleVideo'),co=document.getElementById('circleOverlay');
+function circleMsg(msg){document.getElementById('circleStatus').textContent=msg}
+function circleButtons(recording){document.getElementById('circleStart').disabled=recording||!circleStream;document.getElementById('circleStop').disabled=!recording;document.getElementById('circleFlip').disabled=recording}
+async function openCircle(){co.classList.add('show');await cameraCircle()}
+async function cameraCircle(){
+if(circleStream)circleStream.getTracks().forEach(t=>t.stop());
+if(circleUrl){URL.revokeObjectURL(circleUrl);circleUrl=null}
+document.getElementById('circleDownload').style.display='none';
+try{
+if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder)throw Error('Запись не поддерживается этим браузером. Открой приложение в Safari на iPhone.');
+circleStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:circleFacing},width:{ideal:720},height:{ideal:720}},audio:true});
+cv.srcObject=circleStream;cv.muted=true;cv.controls=false;await cv.play();circleButtons(false);circleMsg('Готово к записи · максимум 60 секунд');
+}catch(e){circleMsg('Не удалось открыть камеру: '+e.message);circleButtons(false)}
+}
+async function flipCircle(){if(circleRecorder?.state==='recording')return;circleFacing=circleFacing==='user'?'environment':'user';await cameraCircle()}
+function startCircle(){
+if(!circleStream||circleRecorder?.state==='recording')return;
+try{
+circleParts=[];circleMime=['video/mp4','video/webm;codecs=vp8,opus','video/webm'].find(t=>MediaRecorder.isTypeSupported(t))||'';
+circleRecorder=new MediaRecorder(circleStream,circleMime?{mimeType:circleMime}:undefined);
+circleRecorder.ondataavailable=e=>{if(e.data.size)circleParts.push(e.data)};
+circleRecorder.onstop=()=>{
+clearInterval(circleTick);
+const blob=new Blob(circleParts,{type:circleRecorder.mimeType||'video/mp4'});
+if(!blob.size){circleMsg('Запись не получилась. Попробуй ещё раз.');return}
+circleUrl=URL.createObjectURL(blob);cv.srcObject=null;cv.src=circleUrl;cv.muted=false;cv.controls=true;cv.loop=true;cv.play().catch(()=>{});circleStream?.getTracks().forEach(t=>t.stop());circleStream=null;
+document.getElementById('circleDownload').style.display='inline-block';circleButtons(false);circleMsg('Предпросмотр готов. Видео пока только на этом устройстве.');
+};
+circleRecorder.onerror=()=>circleMsg('Ошибка записи. Попробуй ещё раз.');
+circleRecorder.start(1000);circleStarted=Date.now();circleButtons(true);
+circleTick=setInterval(()=>{const secs=Math.min(60,Math.floor((Date.now()-circleStarted)/1000));document.getElementById('circleTimer').textContent='00:'+String(secs).padStart(2,'0')+' / 01:00';if(secs>=60)stopCircle()},250);
+circleMsg('Идёт запись…');
+}catch(e){circleMsg('Не удалось начать запись: '+e.message)}
+}
+function stopCircle(){if(circleRecorder?.state==='recording')circleRecorder.stop();clearInterval(circleTick)}
+function downloadCircle(){if(!circleUrl)return;const a=document.createElement('a');a.href=circleUrl;a.download='tropa-circle.'+(circleMime.includes('webm')?'webm':'mp4');document.body.appendChild(a);a.click();a.remove()}
+function closeCircle(){stopCircle();circleStream?.getTracks().forEach(t=>t.stop());circleStream=null;cv.pause();cv.srcObject=null;cv.removeAttribute('src');cv.load();if(circleUrl){URL.revokeObjectURL(circleUrl);circleUrl=null}co.classList.remove('show');document.getElementById('circleTimer').textContent='00:00 / 01:00';document.getElementById('circleDownload').style.display='none'}
 </script></body></html>
